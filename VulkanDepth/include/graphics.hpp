@@ -57,6 +57,17 @@ struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;
     glm::vec2 texCoord;
+// -------------------------------------------------------------------------------- 
+
+    /**
+     * @brief Constructs a Vertex with the specified position, color, and texture coordinates.
+     * 
+     * @param pos Position of the vertex in 3D space.
+     * @param color Color of the vertex as an RGB vector.
+     * @param texCoord Texture coordinates of the vertex.
+     */
+    Vertex(const glm::vec3& pos, const glm::vec3& color, const glm::vec2& texCoord)
+        : pos(pos), color(color), texCoord(texCoord) {}
 // --------------------------------------------------------------------------------
 
     /**
