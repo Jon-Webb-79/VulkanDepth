@@ -742,7 +742,7 @@ private:
      * @param width The new framebuffer width.
      * @param height The new framebuffer height.
      */
-    void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+    void framebufferResizeCallback(GLFWwindow* window) {
         auto app = reinterpret_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
         if (app) {
             app->setFramebufferResized(true);
