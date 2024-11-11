@@ -53,7 +53,7 @@ static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
  * static methods to describe how these vertex attributes are laid out in memory
  * for Vulkan's vertex input system. 
  */
-struct Vertex {
+struct ThreeDVertex {
     glm::vec3 pos;
     glm::vec3 color;
     glm::vec2 texCoord;
@@ -66,7 +66,7 @@ struct Vertex {
      * @param color Color of the vertex as an RGB vector.
      * @param texCoord Texture coordinates of the vertex.
      */
-    Vertex(const glm::vec3& pos, const glm::vec3& color, const glm::vec2& texCoord)
+    ThreeDVertex(const glm::vec3& pos, const glm::vec3& color, const glm::vec2& texCoord)
         : pos(pos), color(color), texCoord(texCoord) {}
 // --------------------------------------------------------------------------------
 
@@ -82,7 +82,7 @@ struct Vertex {
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription bindingDescription{};
         bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Vertex);
+        bindingDescription.stride = sizeof(ThreeDVertex);
         bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
         return bindingDescription;
@@ -103,17 +103,17 @@ struct Vertex {
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
         attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+        attributeDescriptions[0].offset = offsetof(ThreeDVertex, pos);
 
         attributeDescriptions[1].binding = 0;
         attributeDescriptions[1].location = 1;
         attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, color);
+        attributeDescriptions[1].offset = offsetof(ThreeDVertex, color);
 
         attributeDescriptions[2].binding = 0;
         attributeDescriptions[2].location = 2;
         attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+        attributeDescriptions[2].offset = offsetof(ThreeDVertex, texCoord);
 
         return attributeDescriptions;
     }
@@ -2021,8 +2021,8 @@ private:
 
         VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-        auto bindingDescription = Vertex::getBindingDescription();
-        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+        auto bindingDescription = VertexType::getBindingDescription();
+        auto attributeDescriptions = VertexType::getAttributeDescriptions();
 
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

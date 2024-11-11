@@ -24,7 +24,7 @@
 int main(int argc, const char * argv[]) {
 
     // Define vertices for two connected triangles  
-    const std::vector<Vertex> vertices = {
+    const std::vector<ThreeDVertex> vertices = {
         // First square, slightly offset along the x-axis and closer along the z-axis
         {{-0.4f, -0.4f, -0.25f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
         {{0.4f, -0.4f, -0.25f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
@@ -44,7 +44,7 @@ int main(int argc, const char * argv[]) {
     
     // Call Application 
     try {
-        VulkanApplication<Vertex, uint16_t> app = VulkanApplicationBuilder<Vertex, uint16_t>() 
+        VulkanApplication<ThreeDVertex, uint16_t> app = VulkanApplicationBuilder<ThreeDVertex, uint16_t>() 
             .setVertexInfo(vertices, indices)
             .setBaseShaderPaths("../../shaders/shader.vert.spv", 
                                 "../../shaders/shader.frag.spv")
