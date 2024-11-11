@@ -103,6 +103,299 @@ private:
 // ================================================================================ 
 // ================================================================================
 
+// Forward declaration to support VulkanApplicationBuilder
+template <typename VertexType, typename IndexType>
+class VulkanApplication;
+
+/**
+ * @brief A builder class for constructing VulkanApplication instances.
+ * 
+ * VulkanApplicationBuilder helps configure and instantiate a VulkanApplication
+ * object with custom settings and resource paths. The builder pattern provides
+ * a flexible, readable way to set up essential Vulkan resources, shaders, and 
+ * textures, streamlining VulkanApplication initialization.
+ *
+ * @tparam VertexType The vertex data type to use in the application.
+ * @tparam IndexType The index data type, restricted to uint8_t, uint16_t, or uint32_t, compatible with Vulkan.
+ */
+template <typename VertexType, typename IndexType>
+class VulkanApplicationBuilder {
+public:
+    static_assert(std::is_same<IndexType, uint16_t>::value || 
+                  std::is_same<IndexType, uint32_t>::value || 
+                  std::is_same<IndexType, uint8_t>::value, 
+                  "IndexType must be uint16_t, uint32_t, or uint8_t for Vulkan.");
+// --------------------------------------------------------------------------------
+
+    /**
+     * @brief Sets the vertex and index data for the Vulkan application.
+     * 
+     * Specifies the vertex and index buffers to be used in the Vulkan application.
+     * 
+     * @param vertices A vector containing vertex data of type VertexType.
+     * @param indices A vector containing index data of type IndexType.
+     * @return A reference to this builder for chained calls.
+     */
+    VulkanApplicationBuilder& setVertexInfo(const std::vector<VertexType>& vertices,
+                                            const std::vector<IndexType>& indices) {
+        this->vertices = vertices;
+        this->indices = indices;
+        return *this;
+    }
+// --------------------------------------------------------------------------------
+
+    /**
+     * @brief Sets the file paths for vertex and fragment shader files.
+     * 
+     * Defines the SPIR-V shader file paths for the vertex and fragment shaders.
+     * These files are necessary for creating the graphics pipeline in the application.
+     * 
+     * @param vertPath Path to the vertex shader SPIR-V file.
+     * @param fragPath Path to the fragment shader SPIR-V file.
+     * @return A reference to this builder for chained calls.
+     */
+    VulkanApplicationBuilder& setBaseShaderPaths(const std::string& vertPath, 
+                                                 const std::string& fragPath) {
+       this->vertPath = vertPath;
+       this->fragPath = fragPath;
+       return *this;
+    }
+// --------------------------------------------------------------------------------
+
+    /**
+     * @brief Sets the file path for the compute shader.
+     * 
+     * Defines the SPIR-V shader file path for the compute shader, if used.
+     * This shader path is optional and only needed if compute shaders are part of the application.
+     * 
+     * @param computePath Path to the compute shader SPIR-V file.
+     * @return A reference to this builder for chained calls.
+     */
+    VulkanApplicationBuilder& setComputerShaderPath(const std::string& computePath) {
+        this->computePath = computePath;
+        return *this;
+    }
+// --------------------------------------------------------------------------------
+
+    /**
+     * @brief Sets the file path for the texture image.
+     * 
+     * Defines the file path to the texture image to be loaded and used in the application.
+     * 
+     * @param texturePath Path to the texture image file.
+     * @return A reference to this builder for chained calls.
+     */
+    VulkanApplicationBuilder& setTexturePath(const std::string& texturePath) {
+        this->texturePath = texturePath;
+        return *this;
+    }
+// --------------------------------------------------------------------------------
+
+    /**
+     * @brief Sets the sampler configuration string.
+     * 
+     * Defines a string to identify or configure the sampler used for textures in the application.
+     * This can be used to select or configure samplers if multiple sampler configurations are present.
+     * 
+     * @param samplerString A string identifier for the sampler.
+     * @return A reference to this builder for chained calls.
+     */
+    VulkanApplicationBuilder& setSamplerString(const std::string& samplerString) {
+        this->samplerString = samplerString;
+        return *this;
+    }
+// --------------------------------------------------------------------------------
+
+    /**
+     * @brief Builds and returns a configured VulkanApplication instance.
+     * 
+     * Creates the VulkanApplication instance with the configurations specified in the builder,
+     * including vertices, indices, shader paths, and texture information. Initializes necessary
+     * Vulkan components such as swap chain, depth buffer, and command buffers.
+     * 
+     * @param screenWidth The width of the application window.
+     * @param screenHeight The height of the application window.
+     * @param title The title of the application window.
+     * @param fullScreen A boolean to specify if the application should run in full-screen mode.
+     * @return A VulkanApplication instance, fully configured with the specified settings.
+     * 
+     * @throws std::runtime_error if mandatory settings (like shader paths) are missing
+     * or if any Vulkan resource creation fails.
+     */
+    VulkanApplication<VertexType, IndexType> build(uint32_t screenWidth, uint32_t screenHeight,
+                                                   const std::string& title, bool fullScreen = false) {
+        // Create GLFW Window 
+        windowInstance = createWindow(screenHeight, screenWidth, title, fullScreen);
+
+        if (vertPath.empty() || fragPath.empty()) {
+            throw std::runtime_error("Frag and Vert Shader paths must be specified");
+        }
+
+        auto validationLayers = std::make_unique<ValidationLayers>();
+
+        auto vulkanInstanceCreator = std::make_unique<VulkanInstance>(
+            this->windowInstance, 
+            *validationLayers.get()
+        );
+
+        auto vulkanPhysicalDevice = std::make_unique<VulkanPhysicalDevice>(
+            *vulkanInstanceCreator->getInstance(),
+            vulkanInstanceCreator->getSurface()
+        );
+
+        auto vulkanLogicalDevice = std::make_unique<VulkanLogicalDevice>(
+            vulkanPhysicalDevice->getDevice(),
+            validationLayers->getValidationLayers(),
+            vulkanInstanceCreator->getSurface(),
+            deviceExtensions
+        );
+
+        auto allocatorManager = std::make_unique<AllocatorManager>(
+            vulkanPhysicalDevice->getDevice(),
+            vulkanLogicalDevice->getDevice(),
+            *vulkanInstanceCreator->getInstance()
+        );
+
+        auto swapChain = std::make_unique<SwapChain>(
+            vulkanLogicalDevice->getDevice(),
+            vulkanInstanceCreator->getSurface(),
+            vulkanPhysicalDevice->getDevice(),
+            this->windowInstance
+        );
+
+        auto depthManager = std::make_unique<DepthManager>(
+            *allocatorManager,
+            vulkanLogicalDevice->getDevice(),
+            vulkanPhysicalDevice->getDevice(),
+            swapChain->getSwapChainExtent()
+        );
+
+        auto commandBufferManager = std::make_unique<CommandBufferManager<IndexType>>(
+            vulkanLogicalDevice->getDevice(),
+            indices,
+            vulkanPhysicalDevice->getDevice(),
+            vulkanInstanceCreator->getSurface()
+        );
+
+        auto samplerManager = std::make_unique<SamplerManager>(
+            vulkanLogicalDevice->getDevice(),
+            vulkanPhysicalDevice->getDevice()
+        );
+        samplerManager->createSampler(samplerString);
+
+        auto textureManager = std::make_unique<TextureManager<IndexType>>(
+            *allocatorManager,
+            vulkanLogicalDevice->getDevice(),
+            vulkanPhysicalDevice->getDevice(),
+            *commandBufferManager,     
+            vulkanLogicalDevice->getGraphicsQueue(),
+            texturePath,
+            *samplerManager,
+            samplerString
+        );
+
+        auto bufferManager = std::make_unique<BufferManager<VertexType, IndexType>>(
+            vertices,
+            indices,
+            *allocatorManager.get(),
+            *commandBufferManager.get(),
+            vulkanLogicalDevice->getGraphicsQueue()
+        );
+
+        auto descriptorManager = std::make_unique<DescriptorManager>(vulkanLogicalDevice->getDevice());
+        descriptorManager->createDescriptorSets(
+            bufferManager->getUniformBuffers(),
+            textureManager->getTextureImageView(),
+            samplerManager->getSampler(samplerString)
+        );
+
+        auto graphicsPipeline = std::make_unique<GraphicsPipeline<VertexType, IndexType>>(
+            vulkanLogicalDevice->getDevice(),
+            *swapChain.get(),
+            *commandBufferManager.get(),
+            *bufferManager.get(),
+            *descriptorManager.get(),
+            indices,
+            *vulkanPhysicalDevice.get(),
+            vertPath,
+            fragPath,
+            *depthManager.get()
+        );
+        graphicsPipeline->createFrameBuffers(swapChain->getSwapChainImageViews(), 
+                                             swapChain->getSwapChainExtent());
+
+        VkQueue graphicsQueue = vulkanLogicalDevice->getGraphicsQueue();
+        VkQueue presentQueue = vulkanLogicalDevice->getPresentQueue();
+
+        return VulkanApplication(
+            vertices,
+            indices,
+            graphicsQueue,
+            presentQueue,
+            windowInstance,
+            std::move(validationLayers),
+            std::move(vulkanInstanceCreator),
+            std::move(vulkanPhysicalDevice),
+            std::move(vulkanLogicalDevice),
+            std::move(swapChain),
+            std::move(depthManager),
+            std::move(commandBufferManager),
+            std::move(samplerManager),
+            std::move(textureManager),
+            std::move(bufferManager),
+            std::move(descriptorManager),
+            std::move(graphicsPipeline),
+            std::move(allocatorManager)
+        );
+    }
+// ================================================================================
+private:
+    GLFWwindow* windowInstance; /**< The GLFW window instance to be used by Vulkan. */
+    std::vector<VertexType> vertices; /**< Vertex data used in the application. */
+    std::vector<IndexType> indices; /**< Index data used in the application. */
+    std::string vertPath; /**< Path to the vertex shader file. */
+    std::string fragPath; /**< Path to the fragment shader file. */
+    std::string computePath; /**< Path to the compute shader file, if used. */
+    std::string texturePath; /**< Path to the texture image file. */
+    std::string samplerString = "default"; /**< Sampler identifier string, defaulted to "default". */
+// --------------------------------------------------------------------------------
+
+    /**
+     * @brief Creates a GLFW window for Vulkan rendering.
+     * 
+     * Sets up a GLFW window with specified dimensions, title, and full-screen setting.
+     * Configures GLFW for Vulkan by specifying no client API and setting window resizing hints.
+     * 
+     * @param h The height of the window.
+     * @param w The width of the window.
+     * @param screen_title The title of the window.
+     * @param full_screen Boolean to specify if the window should be in full-screen mode.
+     * @return A pointer to the created GLFW window.
+     * 
+     * @throws std::runtime_error if GLFW initialization or window creation fails.
+     */
+    GLFWwindow* createWindow(uint32_t h, uint32_t w, const std::string& screen_title,
+                             bool full_screen) {
+        if (!glfwInit()) {
+            throw std::runtime_error("GLFW Initialization Failed!\n");
+        }
+
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+
+        GLFWmonitor* monitor = full_screen ? glfwGetPrimaryMonitor() : nullptr;
+
+        GLFWwindow* window = glfwCreateWindow(w, h, screen_title.c_str(), monitor, nullptr);
+
+        if (!window) {
+            glfwTerminate();
+            throw std::runtime_error("GLFW Instantiation failed!\n");
+        }
+        return window;
+    }
+};
+// ================================================================================
+// ================================================================================
 /**
  * @brief A template class that represents the Vulkan application.
  * 
@@ -132,26 +425,78 @@ public:
 // --------------------------------------------------------------------------------
 
     /**
-     * @brief Constructs a VulkanApplication with a specified window and mesh data.
+     * @brief Constructs a VulkanApplication with the specified parameters.
      * 
-     * Initializes the application using the provided window, vertices, and indices.
-     * It also sets up core Vulkan resources, such as the pipeline and command buffers.
+     * Initializes the Vulkan application with essential resources for rendering,
+     * including command buffers, swap chains, texture managers, and graphics pipelines.
+     * This constructor accepts a set of Vulkan-related managers and configurations
+     * that must be initialized prior to constructing the VulkanApplication.
      * 
-     * @param window A pointer to the GLFWwindow instance.
-     * @param vertices A vector of vertices of type VertexType.
-     * @param indices A vector of indices of type IndexType.
+     * @param vertices A vector of VertexType containing the vertex data to be used in the application.
+     * @param indices A vector of IndexType containing the index data for rendering.
+     * @param graphicsQueue The VkQueue handle for submitting graphics operations.
+     * @param presentQueue The VkQueue handle for presenting images to the screen.
+     * @param windowInstance A pointer to the GLFW window instance used for rendering.
+     * @param validationLayers A unique pointer to the ValidationLayers manager, responsible for enabling and configuring Vulkan validation layers.
+     * @param vulkanInstanceCreator A unique pointer to the VulkanInstance manager, responsible for creating and managing the Vulkan instance.
+     * @param vulkanPhysicalDevice A unique pointer to the VulkanPhysicalDevice manager, responsible for selecting and managing the physical device used for rendering.
+     * @param vulkanLogicalDevice A unique pointer to the VulkanLogicalDevice manager, responsible for creating and managing the logical device.
+     * @param swapChain A unique pointer to the SwapChain manager, responsible for managing image presentation and swap chain configuration.
+     * @param depthManager A unique pointer to the DepthManager, which manages depth buffering resources for 3D rendering.
+     * @param commandBufferManager A unique pointer to the CommandBufferManager, managing command buffer allocation, submission, and synchronization.
+     * @param samplerManager A unique pointer to the SamplerManager, responsible for creating and managing texture samplers.
+     * @param textureManager A unique pointer to the TextureManager, handling texture loading, memory allocation, and image views.
+     * @param bufferManager A unique pointer to the BufferManager, managing vertex and index buffers.
+     * @param descriptorManager A unique pointer to the DescriptorManager, responsible for creating and binding descriptor sets for shaders.
+     * @param graphicsPipeline A unique pointer to the GraphicsPipeline, which configures and manages the rendering pipeline, including shader stages.
+     * @param allocatorManager A unique pointer to the AllocatorManager, managing memory allocation for Vulkan resources.
+     * 
+     * @note This constructor sets the window's user pointer to the VulkanApplication instance,
+     * enabling the use of GLFW window callbacks to directly reference the application instance.
+     * 
+     * @throws std::runtime_error if any Vulkan objects fail to initialize.
      */
-    VulkanApplication(GLFWwindow* window, 
-                      const std::vector<VertexType>& vertices,
-                      const std::vector<IndexType>& indices)
-        : windowInstance(std::move(window)),
-          vertices(vertices),
-          indices(indices){
-        std::string samplerString = "default";
-        std::string vertexString = "../../shaders/shader.vert.spv";
-        std::string fragString = "../../shaders/shader.frag.spv";
-        constructor(samplerString, vertexString, fragString);
-    }
+
+    VulkanApplication(
+        std::vector<VertexType>& vertices,
+        std::vector<IndexType>& indices,
+        VkQueue graphicsQueue,
+        VkQueue presentQueue,
+        GLFWwindow* windowInstance,
+        std::unique_ptr<ValidationLayers> validationLayers,
+        std::unique_ptr<VulkanInstance> vulkanInstanceCreator,
+        std::unique_ptr<VulkanPhysicalDevice> vulkanPhysicalDevice,
+        std::unique_ptr<VulkanLogicalDevice> vulkanLogicalDevice,
+        std::unique_ptr<SwapChain> swapChain,
+        std::unique_ptr<DepthManager> depthManager,
+        std::unique_ptr<CommandBufferManager<IndexType>> commandBufferManager,
+        std::unique_ptr<SamplerManager> samplerManager,
+        std::unique_ptr<TextureManager<IndexType>> textureManager,
+        std::unique_ptr<BufferManager<VertexType, IndexType>> bufferManager,
+        std::unique_ptr<DescriptorManager> descriptorManager,
+        std::unique_ptr<GraphicsPipeline<VertexType, IndexType>> graphicsPipeline,
+        std::unique_ptr<AllocatorManager> allocatorManager
+    )
+    : vertices(vertices),
+      indices(indices),
+      graphicsQueue(graphicsQueue),
+      presentQueue(presentQueue),
+      windowInstance(windowInstance),
+      validationLayers(std::move(validationLayers)),
+      vulkanInstanceCreator(std::move(vulkanInstanceCreator)),
+      vulkanPhysicalDevice(std::move(vulkanPhysicalDevice)),
+      vulkanLogicalDevice(std::move(vulkanLogicalDevice)),
+      swapChain(std::move(swapChain)),
+      depthManager(std::move(depthManager)),
+      commandBufferManager(std::move(commandBufferManager)),
+      samplerManager(std::move(samplerManager)),
+      textureManager(std::move(textureManager)),
+      bufferManager(std::move(bufferManager)),
+      descriptorManager(std::move(descriptorManager)),
+      graphicsPipeline(std::move(graphicsPipeline)),
+      allocatorManager(std::move(allocatorManager)) {
+        glfwSetWindowUserPointer(windowInstance, this);
+      }
 // --------------------------------------------------------------------------------
 
     /**
@@ -216,7 +561,11 @@ public:
 // ================================================================================ 
 private:
 
-    GLFWwindow* windowInstance; /**< The GLFW window associated with this application. */ 
+    std::vector<VertexType> vertices; /**< A vector holding vertex data. */ 
+    std::vector<IndexType> indices; /**< A vector holding index data. */ 
+    VkQueue graphicsQueue; /**< Vulkan queue for graphics operations. */ 
+    VkQueue presentQueue; /**< Vulkan queue for presentation operations. */ 
+    GLFWwindow* windowInstance; /**< The GLFW window associated with this application. */
     std::unique_ptr<ValidationLayers> validationLayers; /**< Handles Vulkan validation layers. */ 
     std::unique_ptr<VulkanInstance> vulkanInstanceCreator; /**< Creates the Vulkan instance. */ 
     std::unique_ptr<VulkanPhysicalDevice> vulkanPhysicalDevice; /**< Manages the Vulkan physical device. */ 
@@ -229,100 +578,10 @@ private:
     std::unique_ptr<BufferManager<VertexType, IndexType>> bufferManager; /**< Manages Vulkan buffers for vertex and index data. */ 
     std::unique_ptr<DescriptorManager> descriptorManager; /**< Manages descriptor sets for shaders. */ 
     std::unique_ptr<GraphicsPipeline<VertexType, IndexType>> graphicsPipeline; /**< Manages the Vulkan graphics pipeline. */ 
-
-    std::vector<VertexType> vertices; /**< A vector holding vertex data. */ 
-    std::vector<IndexType> indices; /**< A vector holding index data. */ 
-    VkQueue graphicsQueue; /**< Vulkan queue for graphics operations. */ 
-    VkQueue presentQueue; /**< Vulkan queue for presentation operations. */ 
-
     std::unique_ptr<AllocatorManager> allocatorManager; /**< Handles memory allocation for Vulkan objects. */ 
+    
     uint32_t currentFrame = 0; /**< Tracks the current frame index for rendering synchronization. */ 
     bool framebufferResized = false; /**< Indicates if the framebuffer has been resized. */ 
-// --------------------------------------------------------------------------------
-
-    /**
-     * @brief Helper method to initialize core Vulkan components.
-     * 
-     * Sets up Vulkan resources, including command buffers, depth buffers, and pipeline objects.
-     * This method is called in the constructor.
-     * 
-     * @param samplerString The name of the texture sampler.
-     * @param vertexString The file path to the vertex shader.
-     * @param fragString The file path to the fragment shader.
-     */
-    void constructor(std::string samplerstring, std::string vertexstring, std::string fragstring) {
-        glfwSetWindowUserPointer(windowInstance, this);
-
-        validationLayers = std::make_unique<ValidationLayers>();
-        vulkanInstanceCreator = std::make_unique<VulkanInstance>(this->windowInstance, 
-                                                                 *validationLayers.get());
-        vulkanPhysicalDevice = std::make_unique<VulkanPhysicalDevice>(*this->vulkanInstanceCreator->getInstance(),
-                                                                      this->vulkanInstanceCreator->getSurface());
-        vulkanLogicalDevice = std::make_unique<VulkanLogicalDevice>(vulkanPhysicalDevice->getDevice(),
-                                                                    validationLayers->getValidationLayers(),
-                                                                    vulkanInstanceCreator->getSurface(),
-                                                                    deviceExtensions);
-        allocatorManager = std::make_unique<AllocatorManager>(
-            vulkanPhysicalDevice->getDevice(),
-            vulkanLogicalDevice->getDevice(),
-            *vulkanInstanceCreator->getInstance());
-
-        swapChain = std::make_unique<SwapChain>(vulkanLogicalDevice->getDevice(),
-                                                vulkanInstanceCreator->getSurface(),
-                                                vulkanPhysicalDevice->getDevice(),
-                                                this->windowInstance);
-        depthManager = std::make_unique<DepthManager>(
-            *allocatorManager,
-            vulkanLogicalDevice->getDevice(),
-            vulkanPhysicalDevice->getDevice(),
-            swapChain->getSwapChainExtent()
-        );
-        commandBufferManager = std::make_unique<CommandBufferManager<IndexType>>(vulkanLogicalDevice->getDevice(),
-                                                                      indices,
-                                                                      vulkanPhysicalDevice->getDevice(),
-                                                                      vulkanInstanceCreator->getSurface());
-        samplerManager = std::make_unique<SamplerManager>(
-                vulkanLogicalDevice->getDevice(),
-                vulkanPhysicalDevice->getDevice()
-        );
-        samplerManager->createSampler(samplerstring);
-        textureManager = std::make_unique<TextureManager<IndexType>>(
-            *allocatorManager,
-            vulkanLogicalDevice->getDevice(),
-            vulkanPhysicalDevice->getDevice(),
-            *commandBufferManager,     
-            vulkanLogicalDevice->getGraphicsQueue(),
-            "../../../data/texture.jpg",
-            *samplerManager,
-            samplerstring
-        );
-        bufferManager = std::make_unique<BufferManager<VertexType, IndexType>>(vertices,
-                                                        indices,
-                                                        *allocatorManager,
-                                                        *commandBufferManager.get(),
-                                                        vulkanLogicalDevice->getGraphicsQueue());
-        descriptorManager = std::make_unique<DescriptorManager>(vulkanLogicalDevice->getDevice());
-        descriptorManager->createDescriptorSets(bufferManager->getUniformBuffers(),
-                                                textureManager->getTextureImageView(),
-                                                samplerManager->getSampler(samplerstring)
-                                                );
-        // graphicsPipeline = std::make_unique<GraphicsPipelineTwo<VertexType, IndexType>>(vulkanLogicalDevice->getDevice(),
-        //                                                       *swapChain.get());
-        graphicsPipeline = std::make_unique<GraphicsPipeline<VertexType, IndexType>>(vulkanLogicalDevice->getDevice(),
-                                                              *swapChain.get(),
-                                                              *commandBufferManager.get(),
-                                                              *bufferManager.get(),
-                                                              *descriptorManager.get(),
-                                                              indices,
-                                                              *vulkanPhysicalDevice.get(),
-                                                              vertexstring,
-                                                              fragstring,
-                                                              *depthManager.get());
-        graphicsPipeline->createFrameBuffers(swapChain->getSwapChainImageViews(), 
-                                             swapChain->getSwapChainExtent());
-        graphicsQueue = this->vulkanLogicalDevice->getGraphicsQueue();
-        presentQueue = this->vulkanLogicalDevice->getPresentQueue();
-    }
 // --------------------------------------------------------------------------------
 
     /**
@@ -332,6 +591,8 @@ private:
      * Called in the destructor.
      */
     void destroyResources() {
+        glfwDestroyWindow(windowInstance);
+        glfwTerminate();
         graphicsPipeline.reset();
         descriptorManager.reset();
         commandBufferManager.reset();
@@ -380,14 +641,11 @@ private:
         } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
             throw std::runtime_error("failed to acquire swap chain image!");
         }
-
         // Update the uniform buffer with the current image/frame
         updateUniformBuffer(frameIndex);
-
         VkCommandBuffer cmdBuffer = commandBufferManager->getCommandBuffer(frameIndex);
 
         vkResetCommandBuffer(cmdBuffer, 0);
-
         graphicsPipeline->recordCommandBuffer(frameIndex, imageIndex);
 
         VkSubmitInfo submitInfo{};
@@ -409,7 +667,6 @@ private:
         if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, commandBufferManager->getInFlightFence(frameIndex)) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit draw command buffer!");
         }
-
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         presentInfo.waitSemaphoreCount = 1;
