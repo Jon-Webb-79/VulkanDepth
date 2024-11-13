@@ -20,18 +20,6 @@
 #define GLFW_INCLUDE_VULKAN
 #endif
 
-#ifndef GLM_FORCE_RADIANS 
-#define GLM_FORCE_RADIANS
-#endif 
-
-#ifndef GLM_FORCE_DEPTH_ZERO_TO_ONE 
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#endif
-
-// External Libraries
-#include <GLFW/glfw3.h>
-#include <glm/gtc/matrix_transform.hpp>
-
 // Standard Library Includes
 #include <memory>
 #include <mutex>
@@ -327,6 +315,17 @@ public:
         VkQueue graphicsQueue = vulkanLogicalDevice->getGraphicsQueue();
         VkQueue presentQueue = vulkanLogicalDevice->getPresentQueue();
 
+        std::unique_ptr<RenderStrategy<VertexType, IndexType>> renderStrategy = std::make_unique<BasicRenderStrategy<VertexType, IndexType>> (
+            *commandBufferManager.get(),
+            *graphicsPipeline.get(),
+            *vulkanLogicalDevice.get(),
+            *depthManager.get(),
+            graphicsQueue,
+            presentQueue,
+            *swapChain.get(),
+            *bufferManager.get()
+        );
+
         return VulkanApplication(
             vertices,
             indices,
@@ -345,7 +344,8 @@ public:
             std::move(bufferManager),
             std::move(descriptorManager),
             std::move(graphicsPipeline),
-            std::move(allocatorManager)
+            std::move(allocatorManager),
+            std::move(renderStrategy)
         );
     }
 // ================================================================================
@@ -475,7 +475,8 @@ public:
         std::unique_ptr<BufferManager<VertexType, IndexType>> bufferManager,
         std::unique_ptr<DescriptorManager> descriptorManager,
         std::unique_ptr<GraphicsPipeline<VertexType, IndexType>> graphicsPipeline,
-        std::unique_ptr<AllocatorManager> allocatorManager
+        std::unique_ptr<AllocatorManager> allocatorManager,
+        std::unique_ptr<RenderStrategy<VertexType, IndexType>> renderStrategy
     )
     : vertices(vertices),
       indices(indices),
@@ -494,7 +495,8 @@ public:
       bufferManager(std::move(bufferManager)),
       descriptorManager(std::move(descriptorManager)),
       graphicsPipeline(std::move(graphicsPipeline)),
-      allocatorManager(std::move(allocatorManager)) {
+      allocatorManager(std::move(allocatorManager)),
+      renderStrategy(std::move(renderStrategy)){
         glfwSetWindowUserPointer(windowInstance, this);
       }
 // --------------------------------------------------------------------------------
@@ -510,25 +512,6 @@ public:
 // --------------------------------------------------------------------------------
 
     /**
-     * @brief Callback function for scroll events to adjust zoom level.
-     * 
-     * Modifies the zoom level based on scroll input, clamping the zoom level to a
-     * defined range to avoid excessive zooming.
-     * 
-     * @param window The GLFW window receiving the scroll event.
-     * @param xoffset The horizontal scroll offset.
-     * @param yoffset The vertical scroll offset, used to modify zoom.
-     */
-    static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
-        VulkanApplication* app = reinterpret_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
-        if (app) {
-            app->zoomLevel -= yoffset * 0.1f; // Adjust zoom sensitivity
-            app->zoomLevel = glm::clamp(app->zoomLevel, 0.1f, 5.0f); // Clamp zoom level to reasonable limits
-        }
-    }
-// --------------------------------------------------------------------------------
-
-    /**
      * @brief Runs the main application loop.
      * 
      * Polls window events, renders frames, and handles swap chain recreation when necessary.
@@ -536,12 +519,14 @@ public:
      */
     void run() {
         glfwSetScrollCallback(windowInstance, scrollCallback);
+        glfwSetFramebufferSizeCallback(windowInstance, framebufferResizeCallback);
         while (!glfwWindowShouldClose(windowInstance)) {
             glfwPollEvents();
             drawFrame();
 
             if (framebufferResized) {
-                recreateSwapChain();
+                checkWindowPause();
+                renderStrategy->recreateSwapChain();
                 framebufferResized = false;
             }
         }
@@ -579,6 +564,7 @@ private:
     std::unique_ptr<DescriptorManager> descriptorManager; /**< Manages descriptor sets for shaders. */ 
     std::unique_ptr<GraphicsPipeline<VertexType, IndexType>> graphicsPipeline; /**< Manages the Vulkan graphics pipeline. */ 
     std::unique_ptr<AllocatorManager> allocatorManager; /**< Handles memory allocation for Vulkan objects. */ 
+    std::unique_ptr<RenderStrategy<VertexType, IndexType>> renderStrategy;
     
     uint32_t currentFrame = 0; /**< Tracks the current frame index for rendering synchronization. */ 
     bool framebufferResized = false; /**< Indicates if the framebuffer has been resized. */ 
@@ -615,87 +601,19 @@ private:
     }
 // --------------------------------------------------------------------------------
 
-    /**
-     * @brief Renders a single frame.
-     * 
-     * This method acquires a swap chain image, records commands, submits them to the graphics queue,
-     * and presents the image. It handles synchronization and swap chain recreation when necessary.
-     * 
-     * @throws std::runtime_error if Vulkan function calls fail during rendering.
-     */
     void drawFrame() {
-        VkDevice device = vulkanLogicalDevice->getDevice();
-        uint32_t frameIndex = currentFrame;
-
-        // Wait for the frame to be finished
-        commandBufferManager->waitForFences(frameIndex);
-        commandBufferManager->resetFences(frameIndex);
         uint32_t imageIndex;
-        VkResult result = vkAcquireNextImageKHR(device, swapChain->getSwapChain(), UINT64_MAX, 
-                                                commandBufferManager->getImageAvailableSemaphore(frameIndex), 
-                                                VK_NULL_HANDLE, &imageIndex);
-
-        if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-            recreateSwapChain(); // Recreate swap chain if it's out of date
+        if (!renderStrategy->beginFrame(imageIndex)) {
+            renderStrategy->recreateSwapChain();
             return;
-        } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-            throw std::runtime_error("failed to acquire swap chain image!");
         }
-        // Update the uniform buffer with the current image/frame
-        updateUniformBuffer(frameIndex);
-        VkCommandBuffer cmdBuffer = commandBufferManager->getCommandBuffer(frameIndex);
-
-        vkResetCommandBuffer(cmdBuffer, 0);
-        graphicsPipeline->recordCommandBuffer(frameIndex, imageIndex);
-
-        VkSubmitInfo submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-
-        VkSemaphore waitSemaphores[] = {commandBufferManager->getImageAvailableSemaphore(frameIndex)};
-        VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = waitSemaphores;
-        submitInfo.pWaitDstStageMask = waitStages;
-
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &cmdBuffer;
-
-        VkSemaphore signalSemaphores[] = {commandBufferManager->getRenderFinishedSemaphore(frameIndex)};
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = signalSemaphores;
-
-        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, commandBufferManager->getInFlightFence(frameIndex)) != VK_SUCCESS) {
-            throw std::runtime_error("failed to submit draw command buffer!");
-        }
-        VkPresentInfoKHR presentInfo{};
-        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-        presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = signalSemaphores;
-
-        VkSwapchainKHR swapChains[] = {swapChain->getSwapChain()};
-        presentInfo.swapchainCount = 1;
-        presentInfo.pSwapchains = swapChains;
-        presentInfo.pImageIndices = &imageIndex;
-
-        result = vkQueuePresentKHR(presentQueue, &presentInfo);
-        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
-            framebufferResized = false;
-            recreateSwapChain();  // Recreate swap chain if it's out of date or suboptimal
-        } else if (result != VK_SUCCESS) {
-            throw std::runtime_error("failed to present swap chain image!");
-        }
-
-        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+        renderStrategy->updateUniformBuffer(renderStrategy->getCurrentFrame(), zoomLevel); 
+        renderStrategy->recordFrameCommands(renderStrategy->getCurrentFrame(), imageIndex);
+        renderStrategy->endFrame(renderStrategy->getCurrentFrame(), imageIndex, framebufferResized);
     }
 // --------------------------------------------------------------------------------
 
-    /**
-     * @brief Recreates the swap chain and dependent resources.
-     * 
-     * Called when the framebuffer is resized. Reinitializes swap chain resources and command buffers
-     * to accommodate the new window size.
-     */
-    void recreateSwapChain() {
+    void checkWindowPause() {
         // If the window is minimized, pause execution until the window is resized again
         int width = 0, height = 0;
         GLFWwindow* glfwWindow = static_cast<GLFWwindow*>(windowInstance);
@@ -705,31 +623,25 @@ private:
             glfwGetFramebufferSize(glfwWindow, &width, &height);
             glfwWaitEvents();
         }
+    }
+// --------------------------------------------------------------------------------
 
-        vkDeviceWaitIdle(vulkanLogicalDevice->getDevice());
-
-        // Clean up existing swap chain and related resources
-        graphicsPipeline->destroyFramebuffers();
-        swapChain->cleanupSwapChain();
-
-        // Recreate the swap chain and dependent resources
-        swapChain->recreateSwapChain();
-
-        // Recreate depth resources with the new extent
-        depthManager->recreateDepthResources(swapChain->getSwapChainExtent());
-
-        // Recreate the framebuffers using the new swap chain image views
-        graphicsPipeline->createFrameBuffers(swapChain->getSwapChainImageViews(), swapChain->getSwapChainExtent());
-
-        // Free existing command buffers
-        VkCommandPool commandPool = commandBufferManager->getCommandPool();
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            VkCommandBuffer cmdBuffer = commandBufferManager->getCommandBuffer(i);
-            vkFreeCommandBuffers(vulkanLogicalDevice->getDevice(), commandPool, 1, &cmdBuffer);
+    /**
+     * @brief Callback function for scroll events to adjust zoom level.
+     * 
+     * Modifies the zoom level based on scroll input, clamping the zoom level to a
+     * defined range to avoid excessive zooming.
+     * 
+     * @param window The GLFW window receiving the scroll event.
+     * @param xoffset The horizontal scroll offset.
+     * @param yoffset The vertical scroll offset, used to modify zoom.
+     */
+    static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+        VulkanApplication* app = reinterpret_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
+        if (app) {
+            app->zoomLevel -= yoffset * 0.1f; // Adjust zoom sensitivity
+            app->zoomLevel = glm::clamp(app->zoomLevel, 0.1f, 5.0f); // Clamp zoom level to reasonable limits
         }
-
-        // Recreate the command buffers
-        commandBufferManager->createCommandBuffers();
     }
 // --------------------------------------------------------------------------------
 
@@ -742,35 +654,11 @@ private:
      * @param width The new framebuffer width.
      * @param height The new framebuffer height.
      */
-    void framebufferResizeCallback(GLFWwindow* window) {
+    static void framebufferResizeCallback(GLFWwindow* window, int height, int width) {
         auto app = reinterpret_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
         if (app) {
             app->setFramebufferResized(true);
         }
-    }
-// --------------------------------------------------------------------------------
-
-    /**
-     * @brief Updates the uniform buffer for a given frame.
-     * 
-     * Recalculates the transformation matrices for model, view, and projection
-     * and uploads them to the uniform buffer for the specified frame.
-     * 
-     * @param currentImage The index of the current swap chain image.
-     */
-    void updateUniformBuffer(uint32_t currentImage) {
-        static auto startTime = std::chrono::high_resolution_clock::now();
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
-        UniformBufferObject ubo{};
-        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        float fov = glm::radians(45.0f) / zoomLevel; // Adjust FOV with zoom level
-        ubo.proj = glm::perspective(fov, swapChain->getSwapChainExtent().width / (float)swapChain->getSwapChainExtent().height, 0.1f, 10.0f);
-        ubo.proj[1][1] *= -1; // Invert Y-axis for Vulkan
-
-        memcpy(bufferManager->getUniformBuffersMapped()[currentImage], &ubo, sizeof(ubo));
     }
 };
 // ================================================================================

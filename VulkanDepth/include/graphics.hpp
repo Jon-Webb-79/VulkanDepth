@@ -15,6 +15,15 @@
 #ifndef graphics_HPP
 #define graphics_HPP
 
+// Define Preprocessor Macros (before including related libraries)
+#ifndef GLM_FORCE_RADIANS 
+#define GLM_FORCE_RADIANS
+#endif 
+
+#ifndef GLM_FORCE_DEPTH_ZERO_TO_ONE 
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#endif
+
 // Standard Libraries
 #include <vector>
 #include <array>
@@ -29,6 +38,7 @@
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>    // Vulkan Memory Allocator, often depends on Vulkan being included first
 #include <glm/glm.hpp>        // GLM, typically safe after Vulkan
+#include <glm/gtc/matrix_transform.hpp>
 
 // stb_image.h Library
 #include "stb_image.h"        
@@ -2218,6 +2228,198 @@ private:
             throw std::runtime_error("Unsupported index type");
         }
     }
+};
+// ================================================================================
+// ================================================================================
+
+template <typename VertexType, typename IndexType>
+class RenderStrategy {
+public:
+    virtual ~RenderStrategy() = default;
+// --------------------------------------------------------------------------------
+
+    virtual bool beginFrame(uint32_t& frameIndex) = 0;
+// --------------------------------------------------------------------------------
+    
+    virtual void recreateSwapChain() = 0;
+// -------------------------------------------------------------------------------- 
+
+    virtual void recordFrameCommands(uint32_t frameIndex, uint32_t imageIndex) = 0;
+// --------------------------------------------------------------------------------
+
+    virtual void endFrame(uint32_t frameIndex, uint32_t imageIndex, bool framebufferResized) = 0;
+// --------------------------------------------------------------------------------
+
+    virtual void updateUniformBuffer(uint32_t frameIndex, float zoomLevel) = 0;
+// --------------------------------------------------------------------------------
+
+    virtual uint32_t getCurrentFrame() const = 0;
+// --------------------------------------------------------------------------------
+
+ //   virtual uint32_t getImageIndex() const 0;
+};
+// ================================================================================
+// ================================================================================
+
+template <typename VertexType, typename IndexType>
+class BasicRenderStrategy : public RenderStrategy<VertexType, IndexType> {
+public:
+    BasicRenderStrategy(CommandBufferManager<IndexType>& commandBufferManager,
+                        GraphicsPipeline<VertexType, IndexType>& graphicsPipeline,
+                        VulkanLogicalDevice& vulkanLogicalDevice,
+                        DepthManager& depthManager,
+                        VkQueue graphicsQueue,
+                        VkQueue presentQueue,
+                        SwapChain& swapChain,
+                        BufferManager<VertexType, IndexType>& bufferManager)
+        : commandBufferManager(commandBufferManager),
+          graphicsPipeline(graphicsPipeline),
+          vulkanLogicalDevice(vulkanLogicalDevice),
+          depthManager(depthManager),
+          graphicsQueue(graphicsQueue),
+          presentQueue(presentQueue),
+          swapChain(swapChain),
+          bufferManager(bufferManager){}
+// --------------------------------------------------------------------------------
+
+    bool beginFrame(uint32_t& imageIndex) override {
+        VkDevice device = vulkanLogicalDevice.getDevice();
+        uint32_t frameIndex = currentFrame;
+
+        // Wait for the frame to be finished 
+        commandBufferManager.waitForFences(frameIndex);
+        commandBufferManager.resetFences(frameIndex);
+
+        VkResult result = vkAcquireNextImageKHR(device, swapChain.getSwapChain(), UINT64_MAX,
+                                                commandBufferManager.getImageAvailableSemaphore(frameIndex),
+                                                VK_NULL_HANDLE, &imageIndex);
+
+        if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+            recreateSwapChain();
+            return false;
+        } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+            throw std::runtime_error("Failed to acquire swap chain image!");
+        }
+        return true;
+    }
+// --------------------------------------------------------------------------------
+
+    void recreateSwapChain() override {
+        vkDeviceWaitIdle(vulkanLogicalDevice.getDevice());
+
+        // Clean up existing swap chain and related resources
+        graphicsPipeline.destroyFramebuffers();
+        swapChain.cleanupSwapChain();
+
+        // Recreate the swap chain and dependent resources
+        swapChain.recreateSwapChain();
+
+        // Recreate depth resources with the new extent
+        depthManager.recreateDepthResources(swapChain.getSwapChainExtent());
+
+        // Recreate the framebuffers using the new swap chain image views
+        graphicsPipeline.createFrameBuffers(swapChain.getSwapChainImageViews(), swapChain.getSwapChainExtent());
+
+        // Free existing command buffers
+        VkCommandPool commandPool = commandBufferManager.getCommandPool();
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            VkCommandBuffer cmdBuffer = commandBufferManager.getCommandBuffer(i);
+            vkFreeCommandBuffers(vulkanLogicalDevice.getDevice(), commandPool, 1, &cmdBuffer);
+        }
+
+        // Recreate the command buffers
+        commandBufferManager.createCommandBuffers(); 
+    }
+// --------------------------------------------------------------------------------
+
+    void recordFrameCommands(uint32_t frameIndex, uint32_t imageIndex) override {
+        VkCommandBuffer cmdBuffer = commandBufferManager.getCommandBuffer(frameIndex);
+        vkResetCommandBuffer(cmdBuffer, 0);
+        graphicsPipeline.recordCommandBuffer(frameIndex, imageIndex); 
+    }
+// --------------------------------------------------------------------------------
+
+    void endFrame(uint32_t frameIndex, uint32_t imageIndex, bool framebufferResized) override {
+        VkCommandBuffer cmdBuffer = commandBufferManager.getCommandBuffer(frameIndex);
+
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+        VkSemaphore waitSemaphores[] = {commandBufferManager.getImageAvailableSemaphore(frameIndex)};
+        VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &cmdBuffer;
+
+        VkSemaphore signalSemaphores[] = {commandBufferManager.getRenderFinishedSemaphore(frameIndex)};
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = signalSemaphores;
+
+        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, commandBufferManager.getInFlightFence(frameIndex)) != VK_SUCCESS) {
+            throw std::runtime_error("failed to submit draw command buffer!");
+        }
+
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = signalSemaphores;
+
+        VkSwapchainKHR swapChains[] = {swapChain.getSwapChain()};
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = swapChains;
+        presentInfo.pImageIndices = &imageIndex;
+
+        VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+            framebufferResized = false;
+            recreateSwapChain();
+        } else if (result != VK_SUCCESS) {
+            throw std::runtime_error("failed to present swap chain image!");
+        }
+
+        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    }
+// --------------------------------------------------------------------------------
+
+    void updateUniformBuffer(uint32_t currentImage, float zoomLevel) override {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+        UniformBufferObject ubo{};
+        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        float fov = glm::radians(45.0f) / zoomLevel; // Adjust FOV with zoom level
+        ubo.proj = glm::perspective(fov, swapChain.getSwapChainExtent().width / (float)swapChain.getSwapChainExtent().height, 0.1f, 10.0f);
+        ubo.proj[1][1] *= -1; // Invert Y-axis for Vulkan
+
+        memcpy(bufferManager.getUniformBuffersMapped()[currentImage], &ubo, sizeof(ubo));
+    }
+// --------------------------------------------------------------------------------
+
+    uint32_t getCurrentFrame() const override {
+        return currentFrame;
+    }
+// --------------------------------------------------------------------------------
+
+    // uint32_t getImageIndex() const override {
+    //     return imageIndex;
+    // }
+// ================================================================================
+private:
+    CommandBufferManager<IndexType>& commandBufferManager;
+    GraphicsPipeline<VertexType, IndexType>& graphicsPipeline;
+    VulkanLogicalDevice& vulkanLogicalDevice;
+    DepthManager& depthManager;
+    VkQueue graphicsQueue;
+    VkQueue presentQueue;
+    SwapChain& swapChain;
+    BufferManager<VertexType, IndexType>& bufferManager;
+
+    uint32_t currentFrame = 0;
 };
 // ================================================================================
 // ================================================================================
