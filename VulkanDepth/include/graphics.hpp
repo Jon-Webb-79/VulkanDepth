@@ -2403,11 +2403,6 @@ public:
     uint32_t getCurrentFrame() const override {
         return currentFrame;
     }
-// --------------------------------------------------------------------------------
-
-    // uint32_t getImageIndex() const override {
-    //     return imageIndex;
-    // }
 // ================================================================================
 private:
     CommandBufferManager<IndexType>& commandBufferManager;

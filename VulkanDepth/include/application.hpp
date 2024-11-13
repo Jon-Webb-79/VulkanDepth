@@ -601,6 +601,22 @@ private:
     }
 // --------------------------------------------------------------------------------
 
+    /**
+     * @brief Executes the rendering sequence for a single frame.
+     *
+     * This function coordinates the various steps required to render a frame. It first calls
+     * `beginFrame` on the current render strategy to prepare the frame, obtaining an `imageIndex`.
+     * If the swap chain is out of date, it triggers a swap chain recreation and exits early.
+     *
+     * Then, it proceeds to update the uniform buffer, record command buffers, and submit
+     * the frame for presentation. Each of these operations is handled by the render strategy,
+     * allowing for flexibility in rendering behavior across different strategies.
+     *
+     * @note This function uses `RenderStrategy` to decouple rendering logic, ensuring that 
+     * specific rendering strategies can define how they handle frame operations. 
+     *
+     * @throws std::runtime_error if any Vulkan command or operation fails during rendering.
+     */
     void drawFrame() {
         uint32_t imageIndex;
         if (!renderStrategy->beginFrame(imageIndex)) {
@@ -613,6 +629,18 @@ private:
     }
 // --------------------------------------------------------------------------------
 
+    /**
+     * @brief Pauses the application if the window is minimized.
+     *
+     * Checks if the window's framebuffer dimensions are non-zero. If the window is minimized
+     * (width or height is zero), the function enters a loop, waiting for the user to resize the
+     * window to non-zero dimensions. During this pause, events are polled using `glfwWaitEvents`,
+     * which waits for any event (e.g., resize) to occur.
+     *
+     * This function is critical for handling minimized windows, as Vulkan rendering operations
+     * depend on a valid framebuffer size. By waiting until the window is resized, it prevents
+     * unnecessary operations or errors from occurring.
+     */
     void checkWindowPause() {
         // If the window is minimized, pause execution until the window is resized again
         int width = 0, height = 0;
