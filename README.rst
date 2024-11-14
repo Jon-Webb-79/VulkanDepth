@@ -8,7 +8,7 @@ Depth Buffering. In addition to the previous features, it now includes
 depth buffering to correctly render layered textures, ensuring that closer 
 textures appear on top of further ones without aliasing artifacts in overlapping areas.
 
-.. image:: app.png
+.. image:: depth.png
    :alt: Screenshot of the application implementing texture mapping with depth buffering
    :align: center
 
