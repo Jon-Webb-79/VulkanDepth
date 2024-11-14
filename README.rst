@@ -1,6 +1,6 @@
-******************
-VulkanTextureDepth
-******************
+***********
+VulkanDepth
+***********
 
 This application extends an object-oriented approach to the 
 `Vulkan Tutorial <https://vulkan-tutorial.com/>`_ up to the section on 

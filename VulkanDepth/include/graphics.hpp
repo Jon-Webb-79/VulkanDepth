@@ -2384,20 +2384,47 @@ public:
     }
 // --------------------------------------------------------------------------------
 
-    void updateUniformBuffer(uint32_t currentImage, float zoomLevel) override {
-        static auto startTime = std::chrono::high_resolution_clock::now();
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
+    void updateUniformBuffer(uint32_t frameIndex, float zoomLevel) {
         UniformBufferObject ubo{};
-        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        float fov = glm::radians(45.0f) / zoomLevel; // Adjust FOV with zoom level
-        ubo.proj = glm::perspective(fov, swapChain.getSwapChainExtent().width / (float)swapChain.getSwapChainExtent().height, 0.1f, 10.0f);
-        ubo.proj[1][1] *= -1; // Invert Y-axis for Vulkan
 
-        memcpy(bufferManager.getUniformBuffersMapped()[currentImage], &ubo, sizeof(ubo));
+        // Set the model matrix to the identity matrix (no rotation or scaling)
+        ubo.model = glm::mat4(1.0f);
+
+        // Set the view matrix to look from an isometric angle
+        ubo.view = glm::lookAt(
+            glm::vec3(2.0f, 2.0f, 2.0f),  // Position the camera diagonally above and to the side
+            glm::vec3(0.0f, 0.0f, 0.0f),  // Look at the origin (center of the scene)
+            glm::vec3(0.0f, 0.0f, 1.0f)   // Up direction is along the Z-axis
+        );
+
+        // Set the projection matrix with adjustable zoom level for an isometric perspective
+        float fov = glm::radians(45.0f) / zoomLevel;  // Adjust the field of view based on zoom level
+        ubo.proj = glm::perspective(fov,
+                                    swapChain.getSwapChainExtent().width / (float)swapChain.getSwapChainExtent().height,
+                                    0.1f, 10.0f);
+
+        // Invert the Y-axis for Vulkan's coordinate system
+        ubo.proj[1][1] *= -1;
+
+        // Copy data to the mapped uniform buffer for the current frame
+        memcpy(bufferManager.getUniformBuffersMapped()[frameIndex], &ubo, sizeof(ubo));
     }
+
+    // This version of updateUniformBuffer rotates the objects
+    // void updateUniformBuffer(uint32_t currentImage, float zoomLevel) override {
+    //     static auto startTime = std::chrono::high_resolution_clock::now();
+    //     auto currentTime = std::chrono::high_resolution_clock::now();
+    //     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+    //
+    //     UniformBufferObject ubo{};
+    //     ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    //     ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    //     float fov = glm::radians(45.0f) / zoomLevel; // Adjust FOV with zoom level
+    //     ubo.proj = glm::perspective(fov, swapChain.getSwapChainExtent().width / (float)swapChain.getSwapChainExtent().height, 0.1f, 10.0f);
+    //     ubo.proj[1][1] *= -1; // Invert Y-axis for Vulkan
+    //
+    //     memcpy(bufferManager.getUniformBuffersMapped()[currentImage], &ubo, sizeof(ubo));
+    // }
 // --------------------------------------------------------------------------------
 
     uint32_t getCurrentFrame() const override {
