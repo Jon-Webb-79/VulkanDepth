@@ -131,6 +131,65 @@ struct ThreeDVertex {
 // ================================================================================
 // ================================================================================
 
+/**
+ * @brief Represents a vertex with position and color attributes.
+ *
+ * This struct defines a vertex with a 2D position and a 3D color. It also provides
+ * static methods to describe how these vertex attributes are laid out in memory
+ * for Vulkan's vertex input system. 
+ */
+struct TwoDVertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+// --------------------------------------------------------------------------------
+
+    /**
+     * @brief Returns the binding description for the vertex input.
+     *
+     * This function specifies how the vertex data is organized in the vertex buffer.
+     * It provides the binding index, the byte stride between consecutive vertex data,
+     * and the rate at which the input should advance.
+     * 
+     * @return A VkVertexInputBindingDescription struct that describes the input binding.
+     */
+    static VkVertexInputBindingDescription getBindingDescription() {
+        VkVertexInputBindingDescription bindingDescription{};
+        bindingDescription.binding = 0;
+        bindingDescription.stride = sizeof(TwoDVertex);
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        return bindingDescription;
+    }
+// --------------------------------------------------------------------------------
+
+    /**
+     * @brief Returns the attribute descriptions for the vertex input.
+     *
+     * This function describes the vertex attributes (position and color) and their
+     * layout in memory. It specifies the format of each attribute and the byte offset
+     * from the start of the vertex structure.
+     * 
+     * @return A std::array of VkVertexInputAttributeDescription structs that describe the vertex attributes.
+     */
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[0].offset = offsetof(TwoDVertex, pos);
+
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = offsetof(TwoDVertex, color);
+
+        return attributeDescriptions;
+    }
+};
+// ================================================================================
+// ================================================================================
+
 struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
